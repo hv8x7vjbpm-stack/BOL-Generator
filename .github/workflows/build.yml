@@ -1,0 +1,43 @@
+name: Build BOL Generator
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install flask python-docx PyPDF2 openpyxl pdfplumber pyinstaller
+      - name: Build
+        run: pyinstaller build.spec
+      - name: Upload Mac build
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOL-Generator-Mac
+          path: dist/
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install flask python-docx PyPDF2 openpyxl pdfplumber pyinstaller
+      - name: Build
+        run: pyinstaller build.spec
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOL-Generator-Windows
+          path: dist/
