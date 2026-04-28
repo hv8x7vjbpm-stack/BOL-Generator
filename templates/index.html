@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BOL Generator – Jackson Pottery</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1a365d;
+      --blue: #2d5a87;
+      --blue-light: #e8f0f9;
+      --green: #276749;
+      --green-bg: #f0fff4;
+      --amber: #856404;
+      --amber-bg: #fff3cd;
+      --red: #c0392b;
+      --red-bg: #fdecea;
+      --border: #d1dce8;
+      --bg: #f0f4f8;
+      --white: #ffffff;
+      --text: #1a202c;
+      --muted: #718096;
+      --shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, var(--navy) 0%, var(--blue) 100%);
+      color: white; padding: 0; position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .header-inner { max-width: 1400px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 20px; }
+    .header h1 { font-size: 20px; font-weight: 700; flex: 1; }
+    .header p { font-size: 13px; opacity: 0.8; }
+    .tab-bar { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 8px 18px; border: none; border-radius: 6px 6px 0 0;
+      font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s;
+      background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.8);
+    }
+    .tab-btn.active { background: var(--bg); color: var(--navy); }
+    .tab-btn:hover:not(.active) { background: rgba(255,255,255,0.25); color: white; }
+
+    /* ── Layout ── */
+    .main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards / Panels ── */
+    .card {
+      background: var(--white); border-radius: 10px;
+      box-shadow: var(--shadow); padding: 22px 26px; margin-bottom: 20px;
+    }
+    .card h2 { font-size: 16px; font-weight: 700; color: var(--navy); margin-bottom: 16px;
+      padding-bottom: 10px; border-bottom: 2px solid var(--border); }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 9px 18px; border: none; border-radius: 6px; font-size: 13px;
+      font-weight: 600; cursor: pointer; transition: all .15s; display: inline-flex;
+      align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--blue); color: white; }
+    .btn-primary:hover { background: var(--navy); }
+    .btn-success { background: #276749; color: white; }
+    .btn-success:hover { background: #1d4f35; }
+    .btn-amber { background: #d97706; color: white; }
+    .btn-amber:hover { background: #b45309; }
+    .btn-red { background: var(--red); color: white; }
+    .btn-red:hover { background: #a93226; }
+    .btn-ghost { background: transparent; color: var(--blue); border: 1.5px solid var(--border); }
+    .btn-ghost:hover { background: var(--blue-light); }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .btn-xs { padding: 4px 8px; font-size: 11px; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ── Forms ── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-group { display: flex; flex-direction: column; }
+    .form-group.full { grid-column: 1 / -1; }
+    label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+      letter-spacing: .6px; margin-bottom: 5px; }
+    input, textarea, select {
+      padding: 9px 11px; border: 1.5px solid var(--border); border-radius: 6px;
+      font-size: 13px; transition: border-color .2s; font-family: inherit;
+    }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(45,90,135,0.1); }
+    textarea { resize: vertical; min-height: 64px; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 3px; font-style: italic; }
+
+    /* ── PO rows ── */
+    .po-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 7px; align-items: end; }
+
+    /* ── BOL form cards ── */
+    .bol-form-card {
+      background: #f8fafc; border: 1.5px solid var(--border);
+      border-radius: 8px; padding: 18px 20px; margin-bottom: 14px;
+    }
+    .bol-form-card h3 { font-size: 14px; color: var(--blue); margin-bottom: 14px; font-weight: 700; }
+
+    /* ── Dashboard toolbar ── */
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+    .search-box { position: relative; flex: 1; min-width: 200px; }
+    .search-box input { width: 100%; padding-left: 34px; }
+    .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; }
+    select.sort-select { min-width: 180px; }
+
+    /* ── Stats bar ── */
+    .stats-bar { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+    .stat-chip {
+      background: var(--white); border: 1.5px solid var(--border); border-radius: 8px;
+      padding: 10px 16px; display: flex; flex-direction: column; align-items: center;
+      min-width: 100px;
+    }
+    .stat-chip .num { font-size: 22px; font-weight: 800; color: var(--navy); }
+    .stat-chip .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+    /* ── BOL item cards (marketplace style) ── */
+    .bol-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .bol-item {
+      background: var(--white); border: 1.5px solid var(--border); border-radius: 10px;
+      overflow: hidden; transition: box-shadow .2s, border-color .2s;
+    }
+    .bol-item:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.12); border-color: var(--blue); }
+    .bol-item.selected { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(45,90,135,0.18); }
+    .bol-item-header {
+      background: linear-gradient(135deg, var(--navy), var(--blue));
+      color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .bol-item-header .order-id { font-size: 13px; font-weight: 700; opacity: 0.9; }
+    .bol-item-header .bol-num { font-size: 15px; font-weight: 800; }
+    .bol-item-header .date { font-size: 11px; opacity: 0.7; }
+    .bol-item-body { padding: 14px 16px; }
+    .bol-detail { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; font-size: 13px; }
+    .bol-detail .lbl { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .4px; min-width: 70px; padding-top: 1px; }
+    .bol-detail .val { color: var(--text); flex: 1; }
+    .po-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .po-tag {
+      background: var(--blue-light); color: var(--navy); font-size: 11px; font-weight: 600;
+      padding: 2px 8px; border-radius: 12px; border: 1px solid #b8d1ec;
+    }
+    .po-tag.repeat { background: var(--amber-bg); color: var(--amber); border-color: #f0c040; }
+    .bol-item-footer {
+      padding: 10px 16px; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    }
+    .select-check { cursor: pointer; width: 16px; height: 16px; accent-color: var(--blue); }
+
+    /* ── PO collation panel ── */
+    .po-collate-section { margin-top: 24px; }
+    .po-collate-section h2 { font-size: 16px; font-weight: 700; color: var(--navy);
+      margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid var(--border); }
+    .po-collate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    .po-collate-card {
+      border: 1.5px solid var(--border); border-radius: 8px; overflow: hidden;
+      background: var(--white);
+    }
+    .po-collate-card.repeated { border-color: #f0c040; }
+    .po-collate-header {
+      padding: 10px 14px; display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; background: var(--blue-light); user-select: none;
+    }
+    .po-collate-card.repeated .po-collate-header { background: var(--amber-bg); }
+    .po-collate-header .po-name { font-size: 14px; font-weight: 700; color: var(--navy); }
+    .po-collate-card.repeated .po-collate-header .po-name { color: var(--amber); }
+    .po-collate-header .count-badge {
+      background: var(--navy); color: white; font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 10px;
+    }
+    .po-collate-card.repeated .po-collate-header .count-badge { background: #d97706; }
+    .po-collate-body { padding: 10px 14px; display: none; }
+    .po-collate-body.open { display: block; }
+    .po-order-row { font-size: 12px; color: var(--text); padding: 5px 0;
+      border-bottom: 1px dashed var(--border); display: flex; justify-content: space-between; }
+    .po-order-row:last-child { border-bottom: none; }
+    .chevron { font-size: 12px; transition: transform .2s; }
+    .chevron.open { transform: rotate(180deg); }
+
+    /* ── Empty state ── */
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+    .empty-state .icon { font-size: 48px; margin-bottom: 14px; }
+    .empty-state p { font-size: 15px; }
+
+    /* ── Loading overlay ── */
+    .loading-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 200;
+      justify-content: center; align-items: center;
+    }
+    .loading-overlay.active { display: flex; }
+    .loading-box { background: white; padding: 30px 40px; border-radius: 12px; text-align: center; }
+    .spinner { border: 4px solid #e2e8f0; border-top: 4px solid var(--blue); border-radius: 50%;
+      width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 14px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px; background: var(--navy); color: white;
+      padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2); z-index: 300;
+      opacity: 0; transform: translateY(10px); transition: all .25s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.green { background: var(--green); }
+    .toast.red { background: var(--red); }
+
+    @media (max-width: 640px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .bol-grid { grid-template-columns: 1fr; }
+      .header-inner { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div>
+      <h1>📦 BOL Generator</h1>
+      <p>Jackson Pottery Inc.</p>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('dashboard')">📋 Dashboard</button>
+      <button class="tab-btn" onclick="switchTab('create')">➕ Create BOLs</button>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- ═══════════════════════════════ DASHBOARD TAB ═══════════════════════ -->
+  <div class="tab-panel active" id="tab-dashboard">
+
+    <div class="toolbar">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search by BOL #, PO, carrier, address…" oninput="renderDashboard()">
+      </div>
+      <select class="sort-select btn" id="sortSelect" onchange="renderDashboard()" style="background:white;">
+        <option value="id-desc">Newest first</option>
+        <option value="id-asc">Oldest first</option>
+        <option value="bol_number">BOL Number A–Z</option>
+        <option value="carrier">Carrier A–Z</option>
+        <option value="total_pallets-desc">Most pallets</option>
+        <option value="date_added-desc">Date (newest)</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="toggleSelectAll()">☑ Select All</button>
+      <button class="btn btn-success btn-sm" id="btnPrintSelected" onclick="printSelected()" disabled>🖨 Print Selected</button>
+      <button class="btn btn-amber btn-sm" id="btnExportSelected" onclick="exportExcel()" disabled>📊 Export Excel</button>
+      <button class="btn btn-amber btn-sm" onclick="exportExcel(true)">📊 Export All</button>
+      <button class="btn btn-red btn-sm" id="btnDeleteSelected" onclick="deleteSelected()" disabled>🗑 Delete Selected</button>
+    </div>
+
+    <div class="stats-bar" id="statsBar"></div>
+
+    <div class="bol-grid" id="bolGrid"></div>
+
+    <div class="po-collate-section" id="poCollateSection" style="display:none;">
+      <h2>🗂 Collated by PO Number <span id="repeatWarning" style="color:#856404;font-size:13px;"></span></h2>
+      <div class="po-collate-grid" id="poCollateGrid"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ CREATE TAB ════════════════════════ -->
+  <div class="tab-panel" id="tab-create">
+    <div class="card">
+      <h2>How many BOLs?</h2>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <input type="number" id="numBols" min="1" max="100" value="1" style="width:80px;text-align:center;font-size:18px;">
+        <button class="btn btn-primary" onclick="setupBols()">Set Up Forms</button>
+      </div>
+    </div>
+
+    <div id="bolForms"></div>
+
+    <div id="generateSection" style="display:none;" class="card">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:15px;padding:14px;" onclick="saveToDashboard()">💾 Save to Dashboard</button>
+        <button class="btn btn-success" style="flex:1;justify-content:center;font-size:15px;padding:14px;" onclick="generatePDF()">🖨 Generate PDF Only</button>
+      </div>
+      <p class="hint" style="margin-top:10px;">Save to Dashboard to track, search, and export — or generate PDF directly.</p>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <p id="loadingMsg">Working…</p>
+    <p style="font-size:12px;color:#718096;margin-top:5px;">Please wait</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════
+let bolStore = [];
+let selectedIds = new Set();
+let poCounters = {};
+let bolFormCount = 0;
+
+// ════════════════════════════════════════════════════════
+// Tab switching
+// ════════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'dashboard') loadAndRender();
+}
+
+// ════════════════════════════════════════════════════════
+// Toast
+// ════════════════════════════════════════════════════════
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+// ════════════════════════════════════════════════════════
+// Loading
+// ════════════════════════════════════════════════════════
+function setLoading(on, msg = 'Working…') {
+  document.getElementById('loadingMsg').textContent = msg;
+  document.getElementById('loadingOverlay').classList.toggle('active', on);
+}
+
+// ════════════════════════════════════════════════════════
+// Dashboard: load & render
+// ════════════════════════════════════════════════════════
+async function loadAndRender() {
+  try {
+    const r = await fetch('/api/bols');
+    bolStore = await r.json();
+    renderDashboard();
+  } catch (e) {
+    showToast('Failed to load BOLs', 'red');
+  }
+}
+
+function getFilteredSorted() {
+  const q = (document.getElementById('searchInput')?.value || '').toLowerCase();
+  const sort = document.getElementById('sortSelect')?.value || 'id-desc';
+
+  let items = bolStore.filter(b => {
+    if (!q) return true;
+    const haystack = [
+      b.bol_number, b.carrier, b.address, b.pro_number, b.shipment,
+      ...(b.po_numbers || []), String(b.id)
+    ].join(' ').toLowerCase();
+    return haystack.includes(q);
+  });
+
+  items.sort((a, b) => {
+    if (sort === 'id-asc') return a.id - b.id;
+    if (sort === 'id-desc') return b.id - a.id;
+    if (sort === 'bol_number') return (a.bol_number||'').localeCompare(b.bol_number||'');
+    if (sort === 'carrier') return (a.carrier||'').localeCompare(b.carrier||'');
+    if (sort === 'total_pallets-desc') return (parseInt(b.total_pallets)||0) - (parseInt(a.total_pallets)||0);
+    if (sort === 'date_added-desc') return (b.date_added||'').localeCompare(a.date_added||'');
+    return 0;
+  });
+  return items;
+}
+
+// Which POs appear more than once across ALL (unfiltered) store
+function getRepeatPOs() {
+  const counts = {};
+  bolStore.forEach(b => (b.po_numbers||[]).forEach(po => {
+    if (po.trim()) counts[po] = (counts[po]||0) + 1;
+  }));
+  return new Set(Object.keys(counts).filter(k => counts[k] > 1));
+}
+
+function renderDashboard() {
+  const items = getFilteredSorted();
+  const repeatPOs = getRepeatPOs();
+
+  // Stats
+  const totalPallets = bolStore.reduce((s, b) => s + (parseInt(b.total_pallets)||0), 0);
+  const allPOs = [...new Set(bolStore.flatMap(b => (b.po_numbers||[]).filter(p=>p.trim())))];
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat-chip"><span class="num">${bolStore.length}</span><span class="lbl">Total BOLs</span></div>
+    <div class="stat-chip"><span class="num">${items.length}</span><span class="lbl">Showing</span></div>
+    <div class="stat-chip"><span class="num">${allPOs.length}</span><span class="lbl">Unique POs</span></div>
+    <div class="stat-chip"><span class="num">${totalPallets}</span><span class="lbl">Total Pallets</span></div>
+    <div class="stat-chip"><span class="num" style="color:${repeatPOs.size>0?'#856404':'#276749'}">${repeatPOs.size}</span><span class="lbl">Repeated POs</span></div>
+    ${selectedIds.size ? `<div class="stat-chip" style="border-color:var(--blue)"><span class="num" style="color:var(--blue)">${selectedIds.size}</span><span class="lbl">Selected</span></div>` : ''}
+  `;
+
+  // BOL grid
+  const grid = document.getElementById('bolGrid');
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="icon">📦</div>
+      <p>${bolStore.length ? 'No BOLs match your search.' : 'No BOLs yet. Go to Create BOLs to add some.'}</p>
+    </div>`;
+  } else {
+    grid.innerHTML = items.map(b => bolCard(b, repeatPOs)).join('');
+  }
+
+  // PO collation
+  buildPOCollation(repeatPOs);
+
+  updateSelectionButtons();
+}
+
+function bolCard(b, repeatPOs) {
+  const pos = (b.po_numbers||[]).filter(p=>p.trim());
+  const pals = b.pallets_per_po || [];
+  const sel = selectedIds.has(b.id);
+  const poTagsHtml = pos.map((po, i) => {
+    const isRepeat = repeatPOs.has(po);
+    return `<span class="po-tag ${isRepeat?'repeat':''}" title="${isRepeat?'⚠ Ordered on multiple BOLs':''}">${po}${pals[i]?' ('+pals[i]+')':''}</span>`;
+  }).join('');
+
+  return `
+  <div class="bol-item${sel?' selected':''}" id="card-${b.id}">
+    <div class="bol-item-header">
+      <div>
+        <div class="order-id">Order #${b.id}</div>
+        <div class="bol-num">BOL: ${b.bol_number || '—'}</div>
+      </div>
+      <div class="date">${b.date_added||''}</div>
+    </div>
+    <div class="bol-item-body">
+      ${b.address ? `<div class="bol-detail"><span class="lbl">Ship To</span><span class="val">${b.address}</span></div>` : ''}
+      ${b.carrier ? `<div class="bol-detail"><span class="lbl">Carrier</span><span class="val">${b.carrier}</span></div>` : ''}
+      ${b.shipment ? `<div class="bol-detail"><span class="lbl">TMS ID</span><span class="val">${b.shipment}</span></div>` : ''}
+      ${b.pro_number ? `<div class="bol-detail"><span class="lbl">PRO #</span><span class="val">${b.pro_number}</span></div>` : ''}
+      ${pos.length ? `<div class="bol-detail"><span class="lbl">POs</span><div><div class="po-tags">${poTagsHtml}</div></div></div>` : ''}
+      <div class="bol-detail">
+        <span class="lbl">Pallets</span><span class="val">${b.total_pallets||'—'}</span>
+        <span class="lbl" style="margin-left:12px;">Weight</span><span class="val">${b.total_weight||'—'}</span>
+      </div>
+    </div>
+    <div class="bol-item-footer">
+      <input type="checkbox" class="select-check" ${sel?'checked':''} onchange="toggleSelect(${b.id}, this.checked)">
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-ghost btn-xs" onclick="printOne(${b.id})">🖨 PDF</button>
+        <button class="btn btn-red btn-xs" onclick="deleteOne(${b.id})">🗑</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function buildPOCollation(repeatPOs) {
+  const section = document.getElementById('poCollateSection');
+  if (!bolStore.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  // Build PO → BOL map
+  const poMap = {};
+  bolStore.forEach(b => {
+    const pos = b.po_numbers || [];
+    const pals = b.pallets_per_po || [];
+    pos.forEach((po, i) => {
+      if (!po.trim()) return;
+      if (!poMap[po]) poMap[po] = [];
+      poMap[po].push({ id: b.id, bol_number: b.bol_number, carrier: b.carrier, pallets: pals[i]||'', address: b.address });
+    });
+  });
+
+  const sorted = Object.keys(poMap).sort();
+  const repeats = sorted.filter(po => poMap[po].length > 1).length;
+  document.getElementById('repeatWarning').textContent = repeats ? `⚠ ${repeats} PO${repeats>1?'s':''} ordered multiple times` : '';
+
+  document.getElementById('poCollateGrid').innerHTML = sorted.map(po => {
+    const entries = poMap[po];
+    const isRepeat = entries.length > 1;
+    const bodyId = `po-body-${po.replace(/\W/g,'_')}`;
+    const chevId = `chev-${po.replace(/\W/g,'_')}`;
+    return `
+    <div class="po-collate-card${isRepeat?' repeated':''}">
+      <div class="po-collate-header" onclick="togglePOBody('${bodyId}','${chevId}')">
+        <span class="po-name">${po}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="count-badge">${entries.length} order${entries.length>1?'s':''}</span>
+          <span class="chevron" id="${chevId}">▾</span>
+        </div>
+      </div>
+      <div class="po-collate-body" id="${bodyId}">
+        ${entries.map(e => `
+          <div class="po-order-row">
+            <span>Order #${e.id} — BOL ${e.bol_number||'—'}</span>
+            <span>${e.pallets ? e.pallets+' pallets' : ''}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);padding-bottom:5px;">${e.carrier||''} ${e.address ? '· '+e.address.split('\n')[0] : ''}</div>
+        `).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function togglePOBody(bodyId, chevId) {
+  const body = document.getElementById(bodyId);
+  const chev = document.getElementById(chevId);
+  body.classList.toggle('open');
+  chev.classList.toggle('open');
+}
+
+// ════════════════════════════════════════════════════════
+// Selection
+// ════════════════════════════════════════════════════════
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  const card = document.getElementById('card-' + id);
+  if (card) card.classList.toggle('selected', checked);
+  updateSelectionButtons();
+  document.getElementById('statsBar') && renderDashboard(); // refresh stat
+}
+
+function toggleSelectAll() {
+  const items = getFilteredSorted();
+  const allSelected = items.every(b => selectedIds.has(b.id));
+  if (allSelected) {
+    items.forEach(b => selectedIds.delete(b.id));
+  } else {
+    items.forEach(b => selectedIds.add(b.id));
+  }
+  renderDashboard();
+}
+
+function updateSelectionButtons() {
+  const has = selectedIds.size > 0;
+  ['btnPrintSelected','btnExportSelected','btnDeleteSelected'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !has;
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// Actions
+// ════════════════════════════════════════════════════════
+async function printOne(id) {
+  setLoading(true, 'Generating PDF…');
+  try {
+    const r = await fetch('/generate/store', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: [id] })
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    downloadBlob(await r.blob(), 'BOL.pdf');
+    showToast('PDF downloaded!', 'green');
+  } catch (e) { showToast('Error: ' + e.message, 'red'); }
+  finally { setLoading(false); }
+}
+
+async function printSelected() {
+  if (!selectedIds.size) return;
+  setLoading(true, 'Generating PDFs…');
+  try {
+    const r = await fetch('/generate/store', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: [...selectedIds] })
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    downloadBlob(await r.blob(), 'BOLs.pdf');
+    showToast('PDFs downloaded!', 'green');
+  } catch (e) { showToast('Error: ' + e.message, 'red'); }
+  finally { setLoading(false); }
+}
+
+async function exportExcel(all = false) {
+  setLoading(true, 'Building Excel…');
+  try {
+    const ids = all ? [] : [...selectedIds];
+    const r = await fetch('/export/excel', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids })
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    downloadBlob(await r.blob(), 'BOL_Shortage_Sheet.xlsx');
+    showToast('Excel exported!', 'green');
+  } catch (e) { showToast('Error: ' + e.message, 'red'); }
+  finally { setLoading(false); }
+}
+
+async function deleteOne(id) {
+  if (!confirm('Delete Order #' + id + '?')) return;
+  await fetch('/api/bols/' + id, { method: 'DELETE' });
+  selectedIds.delete(id);
+  await loadAndRender();
+  showToast('Deleted.', 'red');
+}
+
+async function deleteSelected() {
+  if (!selectedIds.size || !confirm(`Delete ${selectedIds.size} selected BOL(s)?`)) return;
+  for (const id of [...selectedIds]) {
+    await fetch('/api/bols/' + id, { method: 'DELETE' });
+  }
+  selectedIds.clear();
+  await loadAndRender();
+  showToast('Deleted.', 'red');
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// ════════════════════════════════════════════════════════
+// Create tab
+// ════════════════════════════════════════════════════════
+function setupBols() {
+  const n = parseInt(document.getElementById('numBols').value) || 1;
+  bolFormCount = n;
+  poCounters = {};
+  const container = document.getElementById('bolForms');
+  container.innerHTML = '';
+  for (let i = 0; i < n; i++) container.innerHTML += createBolForm(i);
+  document.getElementById('generateSection').style.display = 'block';
+}
+
+function createBolForm(i) {
+  return `
+  <div class="card bol-form-card" id="bol-${i}">
+    <h3>BOL #${i+1}</h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>BOL Number</label>
+        <input type="text" id="bol_number_${i}" placeholder="Enter BOL number or N/A">
+      </div>
+      <div class="form-group">
+        <label>Carrier</label>
+        <input type="text" id="carrier_${i}" placeholder="Carrier name">
+      </div>
+      <div class="form-group full">
+        <label>Ship To Address</label>
+        <textarea id="address_${i}" placeholder="Full shipping address"></textarea>
+      </div>
+      <div class="form-group">
+        <label>PRO Number</label>
+        <input type="text" id="pro_number_${i}" placeholder="PRO number">
+      </div>
+      <div class="form-group">
+        <label>TMS / Shipment ID</label>
+        <input type="text" id="shipment_${i}" placeholder="Shipment number">
+      </div>
+      <div class="form-group full" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:4px;">
+        <label>PO Numbers &amp; Pallets per PO</label>
+        <p class="hint">Add each PO with its pallet count.</p>
+        <div id="po-container-${i}">
+          <div class="po-row" id="po-row-${i}-0">
+            <div class="form-group"><label style="font-size:10px;">PO Number</label>
+              <input type="text" class="po-number" data-bol="${i}" placeholder="PO Number"></div>
+            <div class="form-group"><label style="font-size:10px;"># Pallets</label>
+              <input type="text" class="po-pallets" data-bol="${i}" placeholder="Pallets"></div>
+            <button class="btn btn-red btn-xs" onclick="removePO(${i},0)" title="Remove">✕</button>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="addPO(${i})" style="margin-top:8px;">+ Add PO</button>
+      </div>
+      <div class="form-group">
+        <label>Total Pallets</label>
+        <input type="text" id="total_pallets_${i}" placeholder="Total">
+      </div>
+      <div class="form-group">
+        <label>Total Weight (lbs)</label>
+        <input type="text" id="total_weight_${i}" placeholder="Weight">
+      </div>
+    </div>
+  </div>`;
+}
+
+function addPO(bolIndex) {
+  if (!poCounters[bolIndex]) poCounters[bolIndex] = 1; else poCounters[bolIndex]++;
+  const idx = poCounters[bolIndex];
+  const row = document.createElement('div');
+  row.className = 'po-row';
+  row.id = `po-row-${bolIndex}-${idx}`;
+  row.innerHTML = `
+    <div class="form-group"><label style="font-size:10px;">PO Number</label>
+      <input type="text" class="po-number" data-bol="${bolIndex}" placeholder="PO Number"></div>
+    <div class="form-group"><label style="font-size:10px;"># Pallets</label>
+      <input type="text" class="po-pallets" data-bol="${bolIndex}" placeholder="Pallets"></div>
+    <button class="btn btn-red btn-xs" onclick="removePO(${bolIndex},${idx})" title="Remove">✕</button>`;
+  document.getElementById(`po-container-${bolIndex}`).appendChild(row);
+}
+
+function removePO(bolIndex, idx) {
+  const row = document.getElementById(`po-row-${bolIndex}-${idx}`);
+  if (row) row.remove();
+}
+
+function collectBolData(i) {
+  const poNums = [], pallets = [];
+  document.querySelectorAll(`#po-container-${i} .po-number`).forEach(el => poNums.push(el.value));
+  document.querySelectorAll(`#po-container-${i} .po-pallets`).forEach(el => pallets.push(el.value));
+  return {
+    bol_number: document.getElementById(`bol_number_${i}`).value,
+    address: document.getElementById(`address_${i}`).value,
+    carrier: document.getElementById(`carrier_${i}`).value,
+    pro_number: document.getElementById(`pro_number_${i}`).value,
+    shipment: document.getElementById(`shipment_${i}`).value,
+    po_numbers: poNums,
+    pallets_per_po: pallets,
+    total_pallets: document.getElementById(`total_pallets_${i}`).value,
+    total_weight: document.getElementById(`total_weight_${i}`).value,
+  };
+}
+
+async function saveToDashboard() {
+  const bols = [];
+  for (let i = 0; i < bolFormCount; i++) bols.push(collectBolData(i));
+  setLoading(true, 'Saving BOLs…');
+  try {
+    const r = await fetch('/api/bols', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ bols })
+    });
+    if (!r.ok) throw new Error('Save failed');
+    const result = await r.json();
+    showToast(`${result.added} BOL(s) saved!`, 'green');
+    document.getElementById('bolForms').innerHTML = '';
+    document.getElementById('generateSection').style.display = 'none';
+    document.getElementById('numBols').value = 1;
+    // Switch to dashboard
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-dashboard').classList.add('active');
+    document.querySelector('.tab-btn').classList.add('active');
+    await loadAndRender();
+  } catch (e) { showToast('Error: ' + e.message, 'red'); }
+  finally { setLoading(false); }
+}
+
+async function generatePDF() {
+  const bols = [];
+  for (let i = 0; i < bolFormCount; i++) bols.push(collectBolData(i));
+  setLoading(true, 'Generating PDFs…');
+  try {
+    const r = await fetch('/generate', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ bols })
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    downloadBlob(await r.blob(), 'BOLs.pdf');
+    showToast('PDF downloaded!', 'green');
+  } catch (e) { showToast('Error: ' + e.message, 'red'); }
+  finally { setLoading(false); }
+}
+
+// ════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════
+loadAndRender();
+setupBols();
+</script>
+</body>
+</html>
