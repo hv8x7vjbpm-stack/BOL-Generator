@@ -1,0 +1,19 @@
+[
+  {
+    "bol_number": "231e",
+    "address": "3123",
+    "carrier": "12312",
+    "pro_number": "123",
+    "shipment": "123",
+    "po_numbers": [
+      "123"
+    ],
+    "pallets_per_po": [
+      "123"
+    ],
+    "total_pallets": "123",
+    "total_weight": "123",
+    "id": 1,
+    "date_added": "2026-04-28 18:13"
+  }
+]
