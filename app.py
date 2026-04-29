@@ -1,72 +1,386 @@
 import os, re, json, tempfile
 from datetime import datetime
 from flask import Flask, render_template, request, send_file, jsonify
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import Paragraph, Frame
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.units import inch
+
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from pypdf import PdfWriter
 import pdfplumber
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 app = Flask(__name__)
 BOL_STORE_PATH = os.path.join(os.path.dirname(__file__), "bol_store.json")
 
-# ── Exact colours from template ───────────────────────────────────────────────
-GREY_HDR = colors.HexColor("#E6E6E6")
-BLACK    = colors.black
-WHITE    = colors.white
+
+# ── Page constants ────────────────────────────────────────────────────────────
+PW, PH = letter          # 612, 792 pt
+ML = MR = MT = MB = 36  # 0.5 inch margins
+TW = PW - ML - MR       # 540pt usable width
+TX = ML                  # table left edge x
+TY_TOP = PH - MT         # table top y (ReportLab y=0 is bottom)
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+BLACK  = colors.black
+WHITE  = colors.white
+GREY   = colors.HexColor("#E6E6E6")
+
+# ── Column widths (pt, scaled from exact EMU measurements) ───────────────────
+SCALE  = TW / 549.2      # 549.2pt = total docx table width
+
+C_L    = 273.6 * SCALE   # Left half  (Ship From side)
+C_R    = 275.6 * SCALE   # Right half (BOL Number side)
+C_PRO  = C_R / 2         # PRO NUMBER
+C_TRL  = C_R / 2         # TRAILER
+
+PO_W = [e/12700*SCALE for e in [2674620, 800100, 468630, 731520, 2299970]]
+COM_W = [e/12700*SCALE for e in [285750,586740,349885,492125,457200,428625,3181985,596265,596265]]
+
+# Value declaration / COD split
+SCALE2 = TW / ((4.1125 + 3.5153) * inch / SCALE)  # proportional
+C_VAL  = TW * 4.1125 / (4.1125 + 3.5153)
+C_COD  = TW * 3.5153 / (4.1125 + 3.5153)
+
+# Received / sig split
+C_REC  = TW * 3.3625 / (3.3625 + 4.2653)
+C_SIG_R = TW * 4.2653 / (3.3625 + 4.2653)
+
+# Bottom sig 4-col
+SIG4 = [TW * x / (2.3750+0.9875+1.9139+2.3514) for x in [2.3750,0.9875,1.9139,2.3514]]
+
+# ── Row heights (pt, from real BOL EMU measurements) ─────────────────────────
+RH = [
+    23.05,   # 0  title bar (fixed)
+    14.40,   # 1  Ship From label (fixed)
+    115.40,  # 2  Ship From content
+    14.40,   # 3  Ship To label (fixed)
+    56.10,   # 4  Ship To / Carrier content
+    14.40,   # 5  Third Party label (fixed)
+    56.10,   # 6  Third Party content / PRO / Trailer
+    31.17,   # 7  TMS ID / Freight terms
+    14.40,   # 8  DO NOT STACK / Master bill (fixed)
+    14.40,   # 9  Customer Order header (fixed)
+    14.40,   # 10 PO table header (fixed)
+    14.03,   # 11-18: 8 PO data rows
+    14.03, 14.03, 14.03, 14.03, 14.03, 14.03, 14.03,
+    43.64,   # 19 Commodity header
+    22.44,   # 20 Commodity data
+    22.44,   # 21 Value declaration / COD
+    10.80,   # 22 Liability note (fixed)
+    56.10,   # 23 Received text / carrier
+    84.15,   # 24 Signature row
+]
 
 # ── Paragraph styles ──────────────────────────────────────────────────────────
-def S(name, font="Helvetica", size=8, leading=None, color=BLACK, align=TA_LEFT):
-    return ParagraphStyle(name, fontName=font, fontSize=size,
-                          leading=leading or max(size+1.5, size*1.2),
-                          textColor=color, alignment=align, wordWrap='CJK',
-                          spaceBefore=0, spaceAfter=0)
+PAD = 2  # cell padding pts
 
-sLabel  = S("lbl",  size=7.5)
-sLabelC = S("lblc", size=7.5, align=TA_CENTER)
-sNorm   = S("nrm",  size=8.5)
-sNormC  = S("nrmc", size=8.5, align=TA_CENTER)
-sNormB  = S("nrmb", size=8.5, font="Helvetica-Bold")
-sBig    = S("big",  size=11)
-sBigB   = S("bigb", size=11,  font="Helvetica-Bold")
-sSmall  = S("sm",   size=6.5)
-sSmallB = S("smb",  size=6.5, font="Helvetica-Bold")
-sDontStack = S("ds", size=8,  font="Helvetica-Bold")  # Arial Black equiv - heavy not italic
-sTiny   = S("ti",   size=5.5)
-sTitle  = S("tt",   size=9,   font="Helvetica-Bold", color=WHITE, align=TA_CENTER)
+def sty(size=7, bold=False, align=TA_LEFT, color=BLACK, leading=None):
+    fn = "Helvetica-Bold" if bold else "Helvetica"
+    return ParagraphStyle("x", fontName=fn, fontSize=size,
+                          leading=leading or size*1.25,
+                          textColor=color, alignment=align,
+                          wordWrap='CJK', spaceBefore=0, spaceAfter=0)
 
-def p(text, style=None):
-    style = style or sNorm
+S_LABEL  = sty(6.5)
+S_LABELC = sty(6.5, align=TA_CENTER)
+S_NORM   = sty(7.5)
+S_NORMC  = sty(7.5, align=TA_CENTER)
+S_BOLD   = sty(7.5, bold=True)
+S_BOLDC  = sty(7.5, bold=True, align=TA_CENTER)
+S_BIG    = sty(10)
+S_BIGB   = sty(10, bold=True)
+S_TITLE  = sty(8, bold=True, align=TA_CENTER, color=WHITE)
+S_TINY   = sty(5.5)
+S_MICRO  = sty(4.5)
+S_TINYC  = sty(5.5, align=TA_CENTER)
+S_SMALL  = sty(6)
+S_SMALLB = sty(6, bold=True)
+S_DONT   = sty(7, bold=True)
+
+def para(text, style):
     safe = str(text).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
     return Paragraph(safe, style)
 
-# ── Table styles ──────────────────────────────────────────────────────────────
-GRID = [
-    ("BOX",           (0,0),(-1,-1), 0.5, BLACK),
-    ("INNERGRID",     (0,0),(-1,-1), 0.5, BLACK),
-    ("VALIGN",        (0,0),(-1,-1), "TOP"),
-    ("TOPPADDING",    (0,0),(-1,-1), 2),
-    ("BOTTOMPADDING", (0,0),(-1,-1), 2),
-    ("LEFTPADDING",   (0,0),(-1,-1), 3),
-    ("RIGHTPADDING",  (0,0),(-1,-1), 3),
-]
-TITLE_STYLE = GRID + [
-    ("BACKGROUND",    (0,0),(-1,-1), BLACK),
-    ("ALIGN",         (0,0),(-1,-1), "CENTER"),
-    ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
-]
-GREY_STYLE = GRID + [("BACKGROUND", (0,0),(-1,-1), GREY_HDR)]
+# ── Drawing helpers ───────────────────────────────────────────────────────────
 
-def tbl(rows, widths, style=None, row_heights=None):
-    t = Table(rows, colWidths=widths, rowHeights=row_heights)
-    t.setStyle(TableStyle(style or GRID))
-    return t
+def draw_rect(c, x, y, w, h, fill=None, stroke=True):
+    """Draw rectangle. y is TOP of cell in page coordinates."""
+    if fill:
+        c.setFillColor(fill)
+        c.rect(x, y - h, w, h, fill=1, stroke=0)
+    if stroke:
+        c.setStrokeColor(BLACK)
+        c.setLineWidth(0.5)
+        c.rect(x, y - h, w, h, fill=0, stroke=1)
+
+
+def draw_cell(c, x, y, w, h, paragraphs, fill=None, pad=PAD):
+    """Draw a table cell with optional fill and text content."""
+    draw_rect(c, x, y, w, h, fill=fill)
+    if not paragraphs:
+        return
+    if not isinstance(paragraphs, list):
+        paragraphs = [paragraphs]
+    # Use a Frame to flow paragraphs
+    frame = Frame(
+        x + pad, y - h + pad,
+        w - pad*2, h - pad*2,
+        leftPadding=0, rightPadding=0,
+        topPadding=0, bottomPadding=0,
+        showBoundary=0
+    )
+    story = []
+    for p in paragraphs:
+        if p is not None:
+            story.append(p)
+    frame.addFromList(story, c)
+
+
+def draw_vline(c, x, y_top, y_bot):
+    c.setStrokeColor(BLACK)
+    c.setLineWidth(0.5)
+    c.line(x, y_top, x, y_bot)
+
+
+# ── Main generator ────────────────────────────────────────────────────────────
+
+def generate_bol_pdf(data, out_path):
+    bol_number     = data.get("bol_number", "")
+    address        = data.get("address", "")
+    carrier        = data.get("carrier", "")
+    pro_number     = data.get("pro_number", "")
+    shipment       = data.get("shipment", "")
+    po_numbers     = data.get("po_numbers", [])
+    pallets_per_po = data.get("pallets_per_po", [])
+    total_pallets  = data.get("total_pallets", "")
+    total_weight   = data.get("total_weight", "")
+
+    c = canvas.Canvas(out_path, pagesize=letter)
+
+    # Precompute row y positions (y = top of each row)
+    y = []
+    cur = TY_TOP
+    for h in RH:
+        y.append(cur)
+        cur -= h
+
+    # ── R0: Title bar ─────────────────────────────────────────────────────────
+    r, h = 0, RH[0]
+    # Three cells
+    w0 = TW * 1.3368 / 7.6278
+    w1 = TW * 4.5257 / 7.6278
+    w2 = TW * 1.7653 / 7.6278
+    draw_cell(c, TX,        y[r], w0, h, para("", S_TITLE),                                      fill=BLACK)
+    draw_cell(c, TX+w0,     y[r], w1, h, para("Bill of Lading \u2013 Short Form \u2013 Non-Negotiable", S_TITLE), fill=BLACK)
+    draw_cell(c, TX+w0+w1,  y[r], w2, h, para("Page 1 of 1", S_TITLE),                          fill=BLACK)
+
+    # ── R1: Ship From label | BOL Number label ────────────────────────────────
+    r, h = 1, RH[1]
+    draw_cell(c, TX,      y[r], C_L, h, para("Ship From", S_LABEL), fill=GREY)
+    draw_cell(c, TX+C_L,  y[r], C_R, h, para("Bill of Lading Number:", S_LABEL))
+
+    # ── R2: Ship From content | BOL Number value ──────────────────────────────
+    r, h = 2, RH[2]
+    draw_cell(c, TX, y[r], C_L, h, [
+        para("JACKSON POTTERY INC", S_NORM),
+        para("2146 EMPIRE CENTRAL", S_NORM),
+        para("DALLAS, TX 75235", S_NORM),
+        para("214-974-0679", S_NORM),
+    ])
+    draw_cell(c, TX+C_L, y[r], C_R, h, para(bol_number, S_BIG))
+
+    # ── R3: Ship To label | Carrier Name label ────────────────────────────────
+    r, h = 3, RH[3]
+    draw_cell(c, TX,      y[r], C_L, h, para("Ship To", S_LABEL), fill=GREY)
+    draw_cell(c, TX+C_L,  y[r], C_R, h, para("Carrier Name:", S_LABEL))
+
+    # ── R4: Ship To content | Carrier value ───────────────────────────────────
+    r, h = 4, RH[4]
+    addr_lines = address.replace("\r", "").split("\n")
+    ship_to = [para("HOME DEPOT \u2013 Store", S_BIGB)]
+    for line in addr_lines:
+        if line.strip():
+            ship_to.append(para(line.strip(), S_BOLD))
+    draw_cell(c, TX,      y[r], C_L, h, ship_to)
+    draw_cell(c, TX+C_L,  y[r], C_R, h, para(carrier, S_BIGB))
+
+    # ── R5: Third Party label | PRO label | Trailer label ────────────────────
+    r, h = 5, RH[5]
+    draw_cell(c, TX,             y[r], C_L,   h, para("Third Party Freight Charges Bill to", S_LABEL), fill=GREY)
+    draw_cell(c, TX+C_L,         y[r], C_PRO, h, para("PRO NUMBER", S_LABEL), fill=GREY)
+    draw_cell(c, TX+C_L+C_PRO,   y[r], C_TRL, h, para("TRAILER / SEAL NUMBER", S_LABEL), fill=GREY)
+
+    # ── R6: Third Party content | PRO value | Trailer value ──────────────────
+    r, h = 6, RH[6]
+    draw_cell(c, TX, y[r], C_L, h, [
+        para("HOMEDEPOT.COM/ATTN: FREIGHT PAYABLES", S_NORM),
+        para("2455 PACES FERRY RD", S_NORM),
+        para("ATLANTA, GA 30339", S_NORM),
+    ])
+    draw_cell(c, TX+C_L,       y[r], C_PRO, h, para(pro_number, S_NORM))
+    draw_cell(c, TX+C_L+C_PRO, y[r], C_TRL, h, para("", S_NORM))
+
+    # ── R7: TMS ID left | Freight Charge Terms right ─────────────────────────
+    r, h = 7, RH[7]
+    draw_cell(c, TX, y[r], C_L, h, [
+        para("TMS ID NUMBER", S_LABEL),
+        para(shipment, S_BIG),
+    ])
+    draw_cell(c, TX+C_L, y[r], C_R, h, [
+        para("Freight Charge Terms (Freight charges are prepaid unless marked otherwise):", S_SMALL),
+        para("Prepaid \u2610  Collect \u2610  3rd Party  x", S_SMALL),
+    ])
+
+    # ── R8: DO NOT STACK left | Master bill right ────────────────────────────
+    r, h = 8, RH[8]
+    draw_cell(c, TX,     y[r], C_L, h, para("DO NOT STACK PALLETS", S_DONT))
+    draw_cell(c, TX+C_L, y[r], C_R, h, para("\u2610 Master bill of lading with attached underlying bills of lading.", S_SMALL))
+
+    # ── R9: Customer Order Information ───────────────────────────────────────
+    r, h = 9, RH[9]
+    draw_cell(c, TX, y[r], TW, h, para("Customer Order Information", S_TITLE), fill=BLACK)
+
+    # ── R10: PO header ────────────────────────────────────────────────────────
+    r, h = 10, RH[10]
+    px = TX
+    hdrs = [
+        (para("SPECIAL INSTRUCTIONS\nPO NUMBERS", S_LABEL), PO_W[0]),
+        (para("# of Pallets", S_LABELC), PO_W[1]),
+        (para("", S_LABEL), PO_W[2]),
+        (para("Pallet/Slip\n(circle one)", S_LABELC), PO_W[3]),
+        (para("Additional Shipper Information", S_LABEL), PO_W[4]),
+    ]
+    for p_text, pw in hdrs:
+        draw_cell(c, px, y[r], pw, h, p_text, fill=GREY)
+        px += pw
+
+    # ── R11-R18: PO data rows ─────────────────────────────────────────────────
+    for i in range(8):
+        r = 11 + i
+        h = RH[r]
+        pov = po_numbers[i]     if i < len(po_numbers)     else ""
+        pav = pallets_per_po[i] if i < len(pallets_per_po) else ""
+        px = TX
+        for content, pw in [
+            (para(pov, S_NORM), PO_W[0]),
+            (para(pav, S_NORMC), PO_W[1]),
+            (para("", S_NORM), PO_W[2]),
+            (para("", S_NORM), PO_W[3]),
+            (para("", S_NORM), PO_W[4]),
+        ]:
+            draw_cell(c, px, y[r], pw, h, content)
+            px += pw
+
+    # ── R19: Commodity header ─────────────────────────────────────────────────
+    r, h = 19, RH[19]
+    px = TX
+    com_hdrs = [
+        (para("Qty", S_LABELC), COM_W[0]),
+        (para("Type", S_LABEL), COM_W[1]),
+        (para("Qty", S_LABELC), COM_W[2]),
+        (para("Type", S_LABEL), COM_W[3]),
+        (para("Weight", S_LABEL), COM_W[4]),
+        (para("HM(X)", S_LABELC), COM_W[5]),
+        (para("Commodity Description  Commodities requiring special or additional "
+              "care or attention in handling or stowing must be so marked and packaged "
+              "as to ensure safe transportation with ordinary care. "
+              "See Section 2(e) of NMFC item 360", S_TINY), COM_W[6]),
+        (para("NMFC No.", S_LABELC), COM_W[7]),
+        (para("Class", S_LABELC), COM_W[8]),
+    ]
+    for p_text, pw in com_hdrs:
+        draw_cell(c, px, y[r], pw, h, p_text, fill=GREY)
+        px += pw
+
+    # ── R20: Commodity data ───────────────────────────────────────────────────
+    r, h = 20, RH[20]
+    px = TX
+    com_data = [
+        (para(total_pallets, S_NORMC), COM_W[0]),
+        (para("PALLETS", S_NORM), COM_W[1]),
+        (para("", S_NORM), COM_W[2]),
+        (para("", S_NORM), COM_W[3]),
+        (para(total_weight, S_NORMC), COM_W[4]),
+        (para("", S_NORM), COM_W[5]),
+        (para("CERAMIC, CHINA, EARTHENWARE, PORCELAIN OR STONEWARE/ POTTERY", S_NORM), COM_W[6]),
+        (para("47500-12", S_NORMC), COM_W[7]),
+        (para("55", S_NORMC), COM_W[8]),
+    ]
+    for p_text, pw in com_data:
+        draw_cell(c, px, y[r], pw, h, p_text)
+        px += pw
+
+    # ── R21: Value declaration | COD ─────────────────────────────────────────
+    r, h = 21, RH[21]
+    draw_cell(c, TX, y[r], C_VAL, h,
+        para('Where the rate is dependent on value, shippers are required to state '
+             'specifically in writing the agreed or declared value of the property as '
+             'follows: "The agreed or declared value of the property is specifically '
+             'stated by the shipper to be not exceeding _______________ per _______________.', S_MICRO))
+    draw_cell(c, TX+C_VAL, y[r], C_COD, h, [
+        para("COD Amount: $", S_MICRO),
+        para("Fee terms: Collect \u2610  Prepaid \u2610  Customer check acceptable \u2610", S_MICRO),
+    ])
+
+    # ── R22: Liability note ───────────────────────────────────────────────────
+    r, h = 22, RH[22]
+    draw_cell(c, TX, y[r], TW, h,
+        para("Note: Liability limitation for loss or damage in this shipment may be "
+             "applicable. See 49 USC \u00a7 14706(c)(1)(A) and (B).", S_TINY))
+
+    # ── R23: Received text | Carrier payment ─────────────────────────────────
+    r, h = 23, RH[23]
+    draw_cell(c, TX, y[r], C_REC, h,
+        para("Received, subject to individually determined rates or contracts that "
+             "have been agreed upon in writing between the carrier and shipper, if "
+             "applicable, otherwise to the rates, classifications, and rules that have "
+             "been established by the carrier and are available to the shipper, on "
+             "request, and to all applicable state and federal regulations.", S_TINY))
+    draw_cell(c, TX+C_REC, y[r], C_SIG_R, h, [
+        para("The carrier shall not make delivery of this shipment without payment "
+             "of charges and all other lawful fees.", S_TINY),
+        para("Shipper Signature: _________________________", S_TINY),
+    ])
+
+    # ── R24: Signature 4-col row ──────────────────────────────────────────────
+    r, h = 24, RH[24]
+    px = TX
+    sig_contents = [
+        [para("Shipper Signature/Date", S_LABEL),
+         para(" ", S_TINY),
+         para("This is to certify that the above-named materials are properly "
+              "classified, packaged, marked, and labeled, and are in proper condition "
+              "for transportation according to the applicable regulations of the DOT.", S_TINY)],
+        [para("Trailer Loaded:", S_LABEL),
+         para("x By shipper", S_SMALL),
+         para("\u2610 By driver", S_SMALL),
+         para("Trailer Counted", S_SMALLB),
+         para("x By shipper", S_SMALL),
+         para("\u2610 By driver", S_SMALL)],
+        [para("Freight Counted:", S_LABEL),
+         para("x By shipper", S_SMALL),
+         para("\u2610 By driver/pallets said to contain", S_SMALL),
+         para("\u2610 By driver/pieces", S_SMALL)],
+        [para("Carrier Signature/Pickup Date", S_LABEL),
+         para(" ", S_TINY),
+         para("Carrier acknowledges receipt of packages and required placards. "
+              "Carrier certifies emergency response information was made available "
+              "and/or carrier has the DOT emergency response guidebook or equivalent "
+              "documentation in the vehicle. Property described above is received in "
+              "good order, except as noted.", S_TINY)],
+    ]
+    for content, sw in zip(sig_contents, SIG4):
+        draw_cell(c, px, y[r], sw, h, content)
+        px += sw
+
+    c.save()
+
 
 # ── Store helpers ─────────────────────────────────────────────────────────────
 def load_store():
@@ -87,265 +401,6 @@ def clean_bol_data(d):
         elif isinstance(v,list):out[k]=["" if x.strip().upper()=="N/A" else x for x in v]
         else: out[k]=v
     return out
-
-# ── PDF generation ────────────────────────────────────────────────────────────
-def generate_bol_pdf(data, out_path):
-    doc = SimpleDocTemplate(out_path, pagesize=letter,
-        leftMargin=0.5*inch, rightMargin=0.5*inch,
-        topMargin=0.5*inch,  bottomMargin=0.5*inch)
-
-    W = 7.5 * inch  # usable width
-
-    # ── Column width sets (scaled from exact EMU measurements) ────────────────
-    # Main 2-col split: 3.800 / 3.828 scaled to W=7.5in
-    SCALE2 = W / ((3.800 + 3.828) * inch)
-    C_L = 3.800 * inch * SCALE2
-    C_R = 3.828 * inch * SCALE2
-
-    # PRO / Trailer: equal halves of C_R
-    C_PRO = C_R / 2
-
-    # PO columns: 2.925, 0.875, 0.5125, 0.800, 2.5153
-    PO_RAW = [2.925, 0.875, 0.5125, 0.800, 2.5153]
-    PO_SCALE = W / (sum(PO_RAW) * inch)
-    PO_W = [x * inch * PO_SCALE for x in PO_RAW]
-
-    # Commodity columns: exact from template
-    COM_RAW = [0.3125, 0.6417, 0.3826, 0.5382, 0.5000, 0.4688, 3.4799, 0.6521, 0.6521]
-    COM_SCALE = W / (sum(COM_RAW) * inch)
-    COM_W = [x * inch * COM_SCALE for x in COM_RAW]
-
-    # COD split: 4.1125 / 3.5153
-    COD_SCALE = W / ((4.1125 + 3.5153) * inch)
-    C_VAL = 4.1125 * inch * COD_SCALE
-    C_COD = 3.5153 * inch * COD_SCALE
-
-    # Received / sig split: 3.3625 / 4.2653
-    REC_SCALE = W / ((3.3625 + 4.2653) * inch)
-    C_REC = 3.3625 * inch * REC_SCALE
-    C_SIG = 4.2653 * inch * REC_SCALE
-
-    # Bottom sig 4-col: 2.3750, 0.9875, 1.9139, 2.3514
-    SIG_RAW = [2.3750, 0.9875, 1.9139, 2.3514]
-    SIG_SCALE = W / (sum(SIG_RAW) * inch)
-    SIG_W = [x * inch * SIG_SCALE for x in SIG_RAW]
-
-    # ── Exact row heights from template (in points, converted from EMU/12700) ─
-    RH = {
-        'title':    23.05,
-        'lbl1':     14.40,
-        'content1': 74.05,
-        'lbl2':     14.40,
-        'content2': None,   # auto — expands with address
-        'lbl3':     14.40,
-        'content3': 24.45,
-        'tms':      13.70,
-        'master':   14.40,
-        'cust_hdr': 14.40,
-        'po_hdr':   10.80,
-        'po_row':   7.05,
-        'com_hdr':  24.50,
-        'com_data': 14.40,
-        'cod':       8.80,
-        'liab':     10.80,
-        'recv':     36.00,
-        'sig':      53.50,
-    }
-
-    def pt(key):
-        v = RH[key]
-        return v if v is None else v
-
-    # ── Pull data ─────────────────────────────────────────────────────────────
-    bol_number     = data.get("bol_number", "")
-    address        = data.get("address", "")
-    carrier        = data.get("carrier", "")
-    pro_number     = data.get("pro_number", "")
-    shipment       = data.get("shipment", "")
-    po_numbers     = data.get("po_numbers", [])
-    pallets_per_po = data.get("pallets_per_po", [])
-    total_pallets  = data.get("total_pallets", "")
-    total_weight   = data.get("total_weight", "")
-
-    story = []
-
-    # ── ROW 0: Title bar ──────────────────────────────────────────────────────
-    story.append(tbl([[
-        p("", sTitle),
-        p("Bill of Lading \u2013 Short Form \u2013 Non-Negotiable", sTitle),
-        p("Page 1 of 1", sTitle),
-    ]], [W*1.3368/7.6278, W*4.5257/7.6278, W*1.7653/7.6278],
-    style=TITLE_STYLE, row_heights=[pt('title')]))
-
-    # ── ROW 1: Ship From label | Bill of Lading Number label ─────────────────
-    story.append(tbl([[
-        p("Ship From", sLabel),
-        p("Bill of Lading Number:", sLabel),
-    ]], [C_L, C_R],
-    style=GREY_STYLE + [("BACKGROUND",(1,0),(1,0), WHITE)],
-    row_heights=[pt('lbl1')]))
-
-    # ── ROW 2: Ship From content | BOL Number value ───────────────────────────
-    story.append(tbl([[
-        [p("JACKSON POTTERY INC", sNorm),
-         p("2146 EMPIRE CENTRAL", sNorm),
-         p("DALLAS, TX 75235", sNorm),
-         p("214-974-0679", sNorm)],
-        p(bol_number, sBig),
-    ]], [C_L, C_R], row_heights=[pt('content1')]))
-
-    # ── ROW 3: Ship To label | Carrier Name label ─────────────────────────────
-    story.append(tbl([[
-        p("Ship To", sLabel),
-        p("Carrier Name:", sLabel),
-    ]], [C_L, C_R],
-    style=GREY_STYLE + [("BACKGROUND",(1,0),(1,0), WHITE)],
-    row_heights=[pt('lbl2')]))
-
-    # ── ROW 4: Ship To content | Carrier value ────────────────────────────────
-    # Address lines bold like the real BOL — fixed min height so empty fields
-    # don't collapse the row
-    addr_lines = address.replace("\r","").split("\n")
-    ship_to_content = [p("HOME DEPOT \u2013 Store", sBigB)]
-    for l in addr_lines:
-        if l.strip():
-            ship_to_content.append(p(l.strip(), sNormB))
-    story.append(tbl([[
-        ship_to_content,
-        p(carrier, sBigB),
-    ]], [C_L, C_R], row_heights=[pt('content2')]))
-
-    # ── ROW 5: Third Party label | PRO label | Trailer label ─────────────────
-    story.append(tbl([[
-        p("Third Party Freight Charges Bill to", sLabel),
-        p("PRO NUMBER", sLabel),
-        p("TRAILER / SEAL NUMBER", sLabel),
-    ]], [C_L, C_PRO, C_PRO],
-    style=GREY_STYLE, row_heights=[pt('lbl3')]))
-
-    # ── ROW 6: Third Party content | PRO value | Trailer value ───────────────
-    story.append(tbl([[
-        [p("HOMEDEPOT.COM/ATTN: FREIGHT PAYABLES", sNorm),
-         p("2455 PACES FERRY RD", sNorm),
-         p("ATLANTA, GA 30339", sNorm)],
-        p(pro_number, sNorm),
-        p("", sNorm),
-    ]], [C_L, C_PRO, C_PRO], row_heights=[pt('content3')]))
-
-    # ── ROW 7: TMS ID | Freight terms ────────────────────────────────────────
-    story.append(tbl([[
-        [p("TMS ID NUMBER", sLabel),
-         p(shipment, sBig),
-         p("DO NOT STACK PALLETS", sDontStack)],
-        [p("Freight Charge Terms (Freight charges are prepaid unless marked otherwise):", sSmall),
-         p("Prepaid \u2610  Collect \u2610  3rd Party  x", sSmall)],
-    ]], [C_L, C_R], row_heights=[pt('tms')]))
-
-    # ── ROW 8: Master bill row ────────────────────────────────────────────────
-    story.append(tbl([[
-        p("", sNorm),
-        p("\u2610 Master bill of lading with attached underlying bills of lading.", sSmall),
-    ]], [C_L, C_R], row_heights=[pt('master')]))
-
-    # ── ROW 9: Customer Order Information header ──────────────────────────────
-    story.append(tbl([[
-        p("Customer Order Information", sTitle),
-    ]], [W], style=TITLE_STYLE, row_heights=[pt('cust_hdr')]))
-
-    # ── ROW 10: PO table header ───────────────────────────────────────────────
-    story.append(tbl([[
-        p("SPECIAL INSTRUCTIONS\nPO NUMBERS", sLabel),
-        p("# of Pallets", sLabelC),
-        p("", sLabel),
-        p("Pallet/Slip\n(circle one)", sLabelC),
-        p("Additional Shipper Information", sLabel),
-    ]], PO_W, style=GREY_STYLE, row_heights=[pt('po_hdr')]))
-
-    # ── ROWS 11-18: 8 PO data rows with fixed height ─────────────────────────
-    # Fixed height means empty rows look identical to filled rows
-    for i in range(8):
-        pov = po_numbers[i]     if i < len(po_numbers)     else ""
-        pav = pallets_per_po[i] if i < len(pallets_per_po) else ""
-        story.append(tbl([[
-            p(pov, sNorm), p(pav, sNormC), p(""), p(""), p(""),
-        ]], PO_W, row_heights=[pt('po_row')]))
-
-    # ── ROW 19: Commodity header ──────────────────────────────────────────────
-    story.append(tbl([[
-        p("Qty", sLabelC), p("Type", sLabel),
-        p("Qty", sLabelC), p("Type", sLabel),
-        p("Weight", sLabel), p("HM(X)", sLabelC),
-        p("Commodity Description\nCommodities requiring special or additional care or "
-          "attention in handling or stowing must be so marked and packaged as to ensure "
-          "safe transportation with ordinary care. See Section 2(e) of NMFC item 360", sTiny),
-        p("NMFC No.", sLabelC), p("Class", sLabelC),
-    ]], COM_W, style=GREY_STYLE, row_heights=[pt('com_hdr')]))
-
-    # ── ROW 20: Commodity data ────────────────────────────────────────────────
-    story.append(tbl([[
-        p(total_pallets, sNormC), p("PALLETS", sNorm),
-        p(""), p(""),
-        p(total_weight, sNormC), p(""),
-        p("CERAMIC, CHINA, EARTHENWARE, PORCELAIN OR STONEWARE/ POTTERY", sNorm),
-        p("47500-12", sNormC), p("55", sNormC),
-    ]], COM_W, row_heights=[pt('com_data')]))
-
-    # ── ROW 21: Value declaration | COD ──────────────────────────────────────
-    story.append(tbl([[
-        p('Where the rate is dependent on value, shippers are required to state specifically '
-          'in writing the agreed or declared value of the property as follows: "The agreed or '
-          'declared value of the property is specifically stated by the shipper to be not '
-          'exceeding _______________ per _______________.', sTiny),
-        [p("COD Amount: $", sTiny),
-         p("Fee terms: Collect \u2610  Prepaid \u2610  Customer check acceptable \u2610", sTiny)],
-    ]], [C_VAL, C_COD], row_heights=[pt('cod')]))
-
-    # ── ROW 22: Liability note ────────────────────────────────────────────────
-    story.append(tbl([[
-        p("Note: Liability limitation for loss or damage in this shipment may be applicable. "
-          "See 49 USC \u00a7 14706(c)(1)(A) and (B).", sTiny),
-    ]], [W], row_heights=[pt('liab')]))
-
-    # ── ROW 23: Received text | Carrier payment / Shipper sig ────────────────
-    story.append(tbl([[
-        p("Received, subject to individually determined rates or contracts that have been "
-          "agreed upon in writing between the carrier and shipper, if applicable, otherwise "
-          "to the rates, classifications, and rules that have been established by the carrier "
-          "and are available to the shipper, on request, and to all applicable state and "
-          "federal regulations.", sTiny),
-        [p("The carrier shall not make delivery of this shipment without payment of charges "
-           "and all other lawful fees.", sTiny),
-         Spacer(1, 4),
-         p("Shipper Signature: _________________________", sTiny)],
-    ]], [C_REC, C_SIG], row_heights=[pt('recv')]))
-
-    # ── ROW 24: Signature row ─────────────────────────────────────────────────
-    story.append(tbl([[
-        [p("Shipper Signature/Date", sLabel),
-         Spacer(1, 6),
-         p("This is to certify that the above-named materials are properly classified, "
-           "packaged, marked, and labeled, and are in proper condition for transportation "
-           "according to the applicable regulations of the DOT.", sTiny)],
-        [p("Trailer Loaded:", sLabel),
-         p("x By shipper", sSmall),
-         p("\u2610 By driver", sSmall),
-         Spacer(1, 3),
-         p("Trailer Counted", sSmallB),
-         p("x By shipper", sSmall),
-         p("\u2610 By driver", sSmall)],
-        [p("Freight Counted:", sLabel),
-         p("x By shipper", sSmall),
-         p("\u2610 By driver/pallets said to contain", sSmall),
-         p("\u2610 By driver/pieces", sSmall)],
-        [p("Carrier Signature/Pickup Date", sLabel),
-         Spacer(1, 6),
-         p("Carrier acknowledges receipt of packages and required placards. Carrier "
-           "certifies emergency response information was made available and/or carrier "
-           "has the DOT emergency response guidebook or equivalent documentation in the "
-           "vehicle. Property described above is received in good order, except as noted.", sTiny)],
-    ]], SIG_W, row_heights=[pt('sig')]))
-
-    doc.build(story)
 
 
 def generate_bols_pdf(bols_data):
