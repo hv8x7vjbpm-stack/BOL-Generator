@@ -53,10 +53,9 @@ jobs:
             --collect-all webview `
             launch.py
 
-      - name: Install Inno Setup 6
+      - name: Install Inno Setup
         shell: pwsh
-        run: |
-          choco install innosetup --yes --no-progress
+        run: choco install innosetup --yes --no-progress
 
       - name: Write Inno Setup script
         shell: pwsh
@@ -85,8 +84,8 @@ jobs:
           Name: "english"; MessagesFile: "compiler:Default.isl"
 
           [Tasks]
-          Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: checked
-          Name: "startupicon"; Description: "Start automatically with &Windows"; GroupDescription: "Startup:"; Flags: unchecked
+          Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
+          Name: "startupicon"; Description: "Start automatically with &Windows"; GroupDescription: "Startup:"
 
           [Files]
           Source: "dist\BOL Generator\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
