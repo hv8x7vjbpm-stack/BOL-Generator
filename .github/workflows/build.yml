@@ -1,4 +1,4 @@
-name: Build BOL Generator
+name: Build BOL Generator Installer
 
 on:
   push:
@@ -6,38 +6,183 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-mac:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install dependencies
-        run: |
-          pip install flask python-docx PyPDF2 openpyxl pdfplumber pyinstaller
-      - name: Build
-        run: pyinstaller build.spec
-      - name: Upload Mac build
-        uses: actions/upload-artifact@v4
-        with:
-          name: BOL-Generator-Mac
-          path: dist/
-
   build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
+
+      - name: Install Python dependencies
         run: |
-          pip install flask python-docx PyPDF2 openpyxl pdfplumber pyinstaller
-      - name: Build
-        run: pyinstaller build.spec
-      - name: Upload Windows build
+          pip install pyinstaller flask reportlab pypdf openpyxl pdfplumber pywebview pystray pillow
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --windowed `
+            --name "BOL Generator" `
+            --icon "assets\icon.ico" `
+            --add-data "templates;templates" `
+            --add-data "assets;assets" `
+            --hidden-import flask `
+            --hidden-import flask.templating `
+            --hidden-import jinja2 `
+            --hidden-import reportlab `
+            --hidden-import reportlab.lib `
+            --hidden-import reportlab.platypus `
+            --hidden-import reportlab.lib.pagesizes `
+            --hidden-import reportlab.lib.styles `
+            --hidden-import pdfplumber `
+            --hidden-import openpyxl `
+            --hidden-import pypdf `
+            --hidden-import webview `
+            --hidden-import pystray `
+            --hidden-import PIL `
+            --hidden-import PIL.Image `
+            --hidden-import PIL.ImageDraw `
+            --hidden-import PIL.ImageFont `
+            --hidden-import engineio.async_drivers.threading `
+            --collect-all flask `
+            --collect-all jinja2 `
+            --collect-all reportlab `
+            --collect-all pdfplumber `
+            --collect-all webview `
+            launch.py
+
+      - name: Download Inno Setup 6
+        run: |
+          curl -L -o innosetup.exe "https://files.jrsoftware.org/is/6/innosetup-6.2.2.exe"
+          .\innosetup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+        shell: cmd
+
+      - name: Write Inno Setup script
+        run: |
+          $iss = @"
+          [Setup]
+          AppName=BOL Generator
+          AppVersion=1.3
+          AppPublisher=Jackson Pottery Inc
+          AppPublisherURL=https://github.com/${{ github.repository }}
+          DefaultDirName={autopf}\BOL Generator
+          DefaultGroupName=BOL Generator
+          AllowNoIcons=yes
+          OutputDir=installer_output
+          OutputBaseFilename=BOL_Generator_Setup
+          Compression=lzma2/ultra64
+          SolidCompression=yes
+          WizardStyle=modern
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=lowest
+          PrivilegesRequiredOverridesAllowed=dialog
+          CloseApplications=yes
+          UninstallDisplayIcon={app}\BOL Generator.exe
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: checked
+          Name: "startupicon"; Description: "Start automatically with &Windows"; GroupDescription: "Startup:"; Flags: unchecked
+
+          [Files]
+          Source: "dist\BOL Generator\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs; Check: DirExists(ExpandConstant('{src}\assets'))
+
+          [Icons]
+          Name: "{group}\BOL Generator"; Filename: "{app}\BOL Generator.exe"; IconFilename: "{app}\BOL Generator.exe"
+          Name: "{group}\Uninstall BOL Generator"; Filename: "{uninstallexe}"
+          Name: "{commondesktop}\BOL Generator"; Filename: "{app}\BOL Generator.exe"; Tasks: desktopicon; IconFilename: "{app}\BOL Generator.exe"
+
+          [Registry]
+          Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BOL Generator"; ValueData: """{app}\BOL Generator.exe"""; Flags: uninsdeletevalue; Tasks: startupicon
+
+          [Run]
+          Filename: "{app}\BOL Generator.exe"; Description: "&Launch BOL Generator now"; Flags: nowait postinstall skipifsilent
+
+          [UninstallRun]
+          Filename: "taskkill"; Parameters: "/F /IM ""BOL Generator.exe"""; Flags: runhidden
+
+          [Code]
+          procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+          begin
+            if CurUninstallStep = usPostUninstall then
+            begin
+              if MsgBox('Would you like to keep your BOL data and backups?', mbConfirmation, MB_YESNO) = IDNO then
+              begin
+                DelTree(ExpandConstant('{app}\backups'), True, True, True);
+                DeleteFile(ExpandConstant('{app}\bol_store.json'));
+              end;
+            end;
+          end;
+          "@
+          $iss | Out-File -FilePath "setup.iss" -Encoding UTF8
+        shell: pwsh
+
+      - name: Build installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
+        shell: pwsh
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BOL-Generator-Windows
-          path: dist/
+          name: BOL-Generator-Windows-Installer
+          path: installer_output/BOL_Generator_Setup.exe
+          retention-days: 30
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller flask reportlab pypdf openpyxl pdfplumber pywebview pystray pillow
+
+      - name: Build Mac app
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name "BOL Generator" \
+            --add-data "templates:templates" \
+            --hidden-import flask \
+            --hidden-import flask.templating \
+            --hidden-import jinja2 \
+            --hidden-import reportlab \
+            --hidden-import pdfplumber \
+            --hidden-import openpyxl \
+            --hidden-import pypdf \
+            --hidden-import webview \
+            --hidden-import pystray \
+            --hidden-import PIL \
+            --collect-all flask \
+            --collect-all jinja2 \
+            --collect-all reportlab \
+            --collect-all pdfplumber \
+            --collect-all webview \
+            launch.py
+
+      - name: Create DMG
+        run: |
+          mkdir -p dist_dmg
+          cp -r "dist/BOL Generator.app" dist_dmg/
+          hdiutil create -volname "BOL Generator" \
+            -srcfolder dist_dmg \
+            -ov -format UDZO \
+            "BOL_Generator_Mac.dmg"
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOL-Generator-Mac
+          path: BOL_Generator_Mac.dmg
+          retention-days: 30
